@@ -8,15 +8,17 @@
 #include <locale>
 #include <codecvt>
 
+
+
 namespace
 {
 	struct Output
 	{
-		SymbolData& Results;
+		const SymbolData& Results;
 		std::string outdir;
 		bool naked;
 		char separator = ',';
-		Output(SymbolData& Res)
+		Output(const SymbolData& Res)
 			: Results(Res)
 			, separator()
 		{
@@ -36,10 +38,9 @@ namespace
 
 		void AppendHeader(std::string table, std::string& out)
 		{
-
-#define BEGIN_STRUCT(type, name, desc, category) if (table == #name ){ 
+#define BEGIN_STRUCT(type, name, desc, category) if (table == #name ) {
 #define MEMBER(name, desc)  out += ( #name );  out += separator;
-#define END_STRUCT()  ; if (out.back() == separator) out.pop_back(); out+="\n";}
+#define END_STRUCT() ; out += CSV::details::pdbColumn(); out+="\n"; }
 
 #include "PDBReflection.inl"
 
@@ -47,21 +48,25 @@ namespace
 
 
 		template<class T>
-		void PopulateTable(T TableBegin, T TableEnd, const std::string& name)
+		void PopulateTable(T TableBegin, T TableEnd, const std::string& name, size_t pdbId)
 		{
 			CSV::writer Ar(outdir + name + ".csv", true, separator);
-			if (!naked)
+			const bool first = pdbId == 0;
+			if (first && !naked)
 			{
 				AppendHeader(name, Ar.out);
 			}
 			while (TableBegin != TableEnd)
 			{
 				Ar << *TableBegin;
-				Ar.backup();
-				++TableBegin;
+				Ar.out += std::to_string(pdbId);
 				Ar.out += "\n";
+				++TableBegin;
 			}
-			std::ofstream writer(Ar.outPath, std::ios::out | std::ios::binary);
+			const auto openMode = !first ?
+				std::ios::in | std::ios::out | std::ios::binary | std::ios::ate :
+				std::ios::out | std::ios::binary;
+			std::ofstream writer(Ar.outPath, openMode);
 			writer << Ar.out;
 			if (writer.bad())
 			{
@@ -73,27 +78,49 @@ namespace
 		}
 
 		template<class T>
-		void BuildTable(const T& Table, const std::string& name)
+		void BuildTable(const T& Table, const std::string& name, size_t pdbId)
 		{
-			PopulateTable(Table.begin(), Table.end(), name);
+			PopulateTable(Table.begin(), Table.end(), name, pdbId);
 		}
 
-		void GenerateCommands()
+		void GenerateCommands(size_t pdbId)
 		{
-#define BEGIN_STRUCT(type, name, desc, category) BuildTable(Results.type, #name );
+#define BEGIN_STRUCT(type, name, desc, category) BuildTable(Results.type, #name, pdbId );
 
 #include "PDBReflection.inl"
 
+		}
+		void AddPdbIdsTable(const std::vector<std::string>& pdbs)
+		{
+			const auto openMode = std::ios::out | std::ios::binary ;
+			auto path = outdir + CSV::details::pdbColumn() + ".csv";
+			std::ofstream writer(path, openMode);
+			if (!naked)
+			{
+				writer	<< CSV::details::pdbColumn() << separator
+					<< CSV::details::pdbNameColumn()
+					<< "\n";
+			}
+			size_t pdbId = 0;
+			for (const auto& pdb : pdbs)
+			{
+				writer	<< ++pdbId
+					<< CSV::details::getSeparator()
+					<< pdb
+					<< "\n";
+			}
+			if (writer.bad())
+			{
+				std::string err = "Write to ";
+				err += path;
+				err += " failed";
+				set_error(err.data());
+			}
 		}
 	};
 }
 namespace CSV
 {
-	void writer::backup()
-	{
-		out.pop_back();
-	}
-
 	void writer::operator<<(float V)
 	{
 		char Buf[64];
@@ -168,14 +195,25 @@ namespace CSV
 		}
 		out += separator;
 	}
-
+	void writer::operator<<(const PdbIdTable V)
+	{
+		out += "\"";
+		auto copy = V.PdbFile;
+		escape(copy, separator);
+		out += std::move(copy);
+		out += "\"";
+	}
 	namespace
 	{
-		void output(SymbolData& Data)
+		void output(const SymbolData& Data, size_t pdbId, const std::vector<std::string>& pdbs)
 		{
 			Output Result(Data);
 			Result.init();
-			Result.GenerateCommands();
+			if (pdbId == 0)
+			{
+				Result.AddPdbIdsTable(pdbs);
+			}
+			Result.GenerateCommands(pdbId);
 		}
 
 		static std::string describe()
@@ -183,6 +221,7 @@ namespace CSV
 			return
 				"    opt: -outdir=<output directory>\n    opt: -nocolumnheaders\n     opt: -uselocaleseparator";
 		}
+
 	}
 
 	OutputEngine CreateEngine()
@@ -213,6 +252,16 @@ namespace CSV
 				}
 			}
 			return SeparatorTmp;
+		}
+		const std::string& pdbNameColumn()
+		{
+			static const std::string pdbNameColumn("filename");
+			return pdbNameColumn;
+		}
+		const std::string& pdbColumn()
+		{
+			static const std::string pdbColumn("pdbid");
+			return pdbColumn;
 		}
 	};
 }

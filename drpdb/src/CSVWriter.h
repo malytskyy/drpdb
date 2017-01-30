@@ -9,6 +9,10 @@ namespace CSV
 	{
 		//get current locale dependent separator char
 		char getSeparator();
+
+		//for pdb id info
+		const std::string& pdbColumn();
+		const std::string& pdbNameColumn();
 	}
 
 	struct writer
@@ -22,8 +26,6 @@ namespace CSV
 			, UseBitType(UseBitType)
 			, separator(separator)
 		{}
-
-		void backup();
 
 		template<class T, class Y>
 		void operator<<(std::pair<T, Y> V)
@@ -40,6 +42,9 @@ namespace CSV
 		void operator<<(const std::string& V);
 		void operator<<(bool V);
 		void operator<<(long long V);
+
+		//pseudo-type for pdb-id table
+		void operator<<(const PdbIdTable V);
 
 
 #define BEGIN_STRUCT(type, name, desc,category) void operator<<(const type &V){

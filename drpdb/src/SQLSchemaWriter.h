@@ -42,6 +42,8 @@ namespace SQL
 		void operator<<(cell<Sym::address_info> V);
 		void operator<<(cell<bool> V);
 
+		void operator<<(const PdbIdTable& );
+
 #define BEGIN_ENUMERATION(enum_name) void operator<<(cell<Sym::enum_name> V) { column_desc(V.index_type, V.name); Result += " ENUM(";
 #define ENUMERATOR(Enumerator, name) Result += "'"#name"',";
 #define END_ENUMERATION() Result.pop_back(); Result += ")NOT NULL,";  }

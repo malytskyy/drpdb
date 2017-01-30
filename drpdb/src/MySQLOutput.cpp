@@ -9,6 +9,9 @@
 #include "CSVWriter.h"
 #include "SQLSchemaWriter.h"
 
+#undef max
+const auto pdbidTableMarker = std::numeric_limits<size_t>::max();
+
 namespace
 {
 	struct SingleConnection
@@ -57,7 +60,7 @@ namespace
 	};
 	struct OutputData
 	{
-		SymbolData& Results;
+		const SymbolData& Results;
 		std::vector<std::string> UploadCommands;
 		std::string tempdir_escaped;
 		std::string tempdir;
@@ -66,11 +69,11 @@ namespace
 		std::string user;
 		std::string pass;
 		std::string db;
-		OutputData(SymbolData& Res)
+		OutputData(const SymbolData& Res)
 			:Results(Res)
 		{
 		}
-		void init()
+		void init(size_t pdbId)
 		{
 			host = getOption("-host");
 			user = getOption("-user");
@@ -109,7 +112,17 @@ namespace
 			CreateDirectoryA(tempdir.data(), nullptr);
 			tempdir_escaped = replace(tempdir, "\\", "\\\\") + "\\\\";
 
-			GenerateCommands();
+			GenerateCommands(pdbId);
+		}
+		void AddPdbIdsTable(const std::vector<std::string>& pdbs)
+		{
+			std::vector<PdbIdTable> pdbTable;
+			pdbTable.reserve(pdbs.size());
+			for (const auto& pdb : pdbs)
+			{
+				pdbTable.emplace_back(PdbIdTable{pdb});
+			}
+			BuildTable(pdbTable, CSV::details::pdbColumn(), "Assigment of PDB files to their IDs", pdbidTableMarker);
 		}
 		void LoadTable(const std::string& name, const std::string& end)
 		{
@@ -125,67 +138,92 @@ namespace
 			UploadCommands.push_back(Cmd);
 		}
 		template<class T>
-		void CreateTable(std::string tablename, std::string& EndClause, const char* desc)
+		void CreateTable(std::string tablename, std::string& EndClause, const char* desc, size_t pdbid)
 		{
+			const bool pdbtable = pdbid == pdbidTableMarker;
+			const bool first = (pdbid == 0) || pdbtable;
+
 			T Value;
-			UploadCommands.push_back(std::string("DROP TABLE IF EXISTS ") + tablename + ";");
 			SQL::schema_writer Ar(true);
-
-			Ar.Result += "CREATE TABLE ";
-			Ar.Result += tablename.c_str();
-			Ar.Result += "(";
-			Ar << Value;
-			Ar.Result += Ar.Keys;
-			if (Ar.Result.back() == ',')
+			if (first)
 			{
-				Ar.Result.pop_back();
-			}
-			Ar.Result += ") Engine=MyISAM";
-			Ar.Result += " COMMENT='";
-			std::string temp_desc = desc;
-			temp_desc = replace(temp_desc, "'", "''");
-			Ar.Result += temp_desc;
-			Ar.Result += "';";
-			UploadCommands.push_back(Ar.Result);
+				UploadCommands.push_back(std::string("DROP TABLE IF EXISTS ") + tablename + ";");
 
-			Ar.LoadClause.pop_back();
+				Ar.Result += "CREATE TABLE ";
+				Ar.Result += tablename;
+				Ar.Result += "(";
+			}
+			Ar << Value;
+			if (first)
+			{
+				Ar.Result += Ar.Keys;
+				if (!pdbtable)
+				{
+					Ar.Result += CSV::details::pdbColumn();
+					Ar.Result += " INT UNSIGNED NOT NULL";
+					Ar.Result += " COMMENT 'id of the PDB'";
+				}
+				Ar.Result += ") Engine=MyISAM";
+				Ar.Result += " COMMENT='";
+				std::string temp_desc = desc;
+				temp_desc = replace(temp_desc, "'", "''");
+				Ar.Result += temp_desc;
+				Ar.Result += "';";
+				UploadCommands.push_back(Ar.Result);
+			}
+
+			if (!pdbtable)
+			{
+				Ar.LoadClause += CSV::details::pdbColumn();
+			}
 			EndClause = Ar.LoadClause + ") " + Ar.SetClause;
 		}
 
 
 		template<class T>
-		void PopulateTable(T TableBegin, T TableEnd, const std::string& name)
+		void PopulateTable(T TableBegin, T TableEnd, const std::string& name, size_t pdbId)
 		{
+			const bool pdbTablePopulated = pdbId == pdbidTableMarker;
+			pdbId = pdbTablePopulated ? 0 : pdbId;
 			CSV::writer Ar(tempdir + name + "_values.txt", true, ',');
 			while (TableBegin != TableEnd)
 			{
-				Ar << *TableBegin;
-				Ar.backup();
-				++TableBegin;
+				if (pdbTablePopulated)
+				{
+					Ar.out += std::to_string(pdbId++);
+					Ar.out += ',';
+					Ar << *TableBegin;
+				}
+				else
+				{
+					Ar << *TableBegin;
+					Ar.out += std::to_string(pdbId);
+				}
 				Ar.out += "\n";
+				++TableBegin;
 			}
 			std::ofstream writer(Ar.outPath, std::ios::out | std::ios::binary);
 			writer << Ar.out;
 		}
 
 		template<class T>
-		void BuildTable(const std::vector<T>& Table, const std::string& name, const char* desc)
+		void BuildTable(const std::vector<T>& Table, const std::string& name, const char* desc, size_t pdbid)
 		{
 			std::string EndClause;
-			CreateTable<T>(name, EndClause, desc);
-			PopulateTable(Table.begin(), Table.end(), name);
+			CreateTable<T>(name, EndClause, desc, pdbid);
+			PopulateTable(Table.begin(), Table.end(), name, pdbid);
 			LoadTable(name, EndClause);
 		}
 
 		template<class U, class T>
-		void BuildTable(const std::unordered_map<U, T>& Table, const std::string& name, const char* desc)
+		void BuildTable(const std::unordered_map<U, T>& Table, const std::string& name, const char* desc, size_t pdbid)
 		{
 			std::string EndClause;
-			CreateTable<T>(name, EndClause, desc);
+			CreateTable<T>(name, EndClause, desc, pdbid);
 
 			if (Results.Populate)
 			{
-				PopulateTable(Table.begin(), Table.end(), name);
+				PopulateTable(Table.begin(), Table.end(), name, pdbid);
 			}
 			LoadTable(name, EndClause);
 
@@ -195,7 +233,6 @@ namespace
 		{
 			size_t prev = 0;
 			auto next = sequence.find("#then_execute");
-			std::string current;
 			while (next != std::string::npos)
 			{
 				UploadCommands.emplace_back(sequence.substr(prev, next));
@@ -222,10 +259,13 @@ namespace
 				}
 			}
 		}
-		void GenerateCommands()
+		void GenerateCommands(size_t pdbid)
 		{
-			GenerateProcedures();
-#define BEGIN_STRUCT(type, name, desc,category) BuildTable(Results.type, #name, desc );
+			if (pdbid == 0)
+			{
+				GenerateProcedures();
+			}
+#define BEGIN_STRUCT(type, name, desc,category) BuildTable(Results.type, #name, desc, pdbid );
 
 #include "PDBReflection.inl"
 		}
@@ -235,10 +275,14 @@ namespace MySQL
 {
 	namespace
 	{
-		void output(SymbolData& Data)
+		void output(const SymbolData& Data, size_t pdbId, const std::vector<std::string>& pdbs)
 		{
 			OutputData Result(Data);
-			Result.init();
+			Result.init(pdbId);
+			if (pdbId == 0)
+			{
+				Result.AddPdbIdsTable(pdbs);
+			}
 
 			SingleConnection conn(Result.host.data(), Result.user.data(), Result.pass.data(), Result.db.data(), Result.port);
 

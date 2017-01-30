@@ -32,13 +32,15 @@ namespace ODBC
 	}
 	struct Output
 	{
-		SymbolData& Results;
+		const SymbolData& Results;
 		std::string ConnectionString;
 		std::vector<std::string> UploadCommands;
 		std::string TempDir;
+		size_t pdbid;
 
-		Output(SymbolData& Res )
-			:Results(Res)
+		Output(const SymbolData& Res, size_t pdbid )
+			: Results(Res)
+			, pdbid(pdbid)
 		{
 			ConnectionString = getOption("-connect");
 			if (getFlag("-drivers"))
@@ -66,8 +68,12 @@ namespace ODBC
 			UploadCommands.push_back(Cmd);
 		}
 		template<class T>
-		void CreateTable(std::string tablename, std::string& EndClause)
+		void CreateTable(std::string tablename, std::string& EndClause, size_t pdbId)
 		{
+			if (pdbId != 0)
+			{
+				return;
+			}
 			T Value;
 			UploadCommands.push_back(std::string("DROP TABLE IF EXISTS ") + tablename + ";");
 			SQL::schema_writer Ar(false);
@@ -77,10 +83,7 @@ namespace ODBC
 			Ar.Result += "(";
 			Ar << Value;
 			Ar.Result += Ar.Keys;
-			if (Ar.Result.back() == ',')
-			{
-				Ar.Result.pop_back();
-			}
+			Ar.Result += CSV::details::pdbColumn();
 			Ar.Result += ")";
 			UploadCommands.push_back(Ar.Result);
 
@@ -95,39 +98,39 @@ namespace ODBC
 
 
 		template<class T>
-		void PopulateTable(T TableBegin, T TableEnd, const std::string& name)
+		void PopulateTable(T TableBegin, T TableEnd, const std::string& name, size_t pdbId)
 		{
 			CSV::writer Ar(TempDir + name + "_values.txt", false, ',');
 			while (TableBegin != TableEnd)
 			{
 				Ar << *TableBegin;
-				Ar.backup();
-				++TableBegin;
+				Ar.out += std::to_string(pdbId);
 				Ar.out += "\n";
+				++TableBegin;
 			}
 			std::ofstream writer(Ar.outPath, std::ios::out | std::ios::binary);
 			writer << Ar.out;
 		}
 
 		template<class T>
-		void BuildTable(const std::vector<T>& Table, const std::string& name)
+		void BuildTable(const std::vector<T>& Table, const std::string& name, size_t pdbId)
 		{
 			std::string EndClause;
-			CreateTable<T>(name, EndClause);
-			PopulateTable(Table.begin(), Table.end(), name);
+			CreateTable<T>(name, EndClause, pdbId);
+			PopulateTable(Table.begin(), Table.end(), name, pdbId);
 		}
 
 		template<class U, class T>
-		void BuildTable(const std::unordered_map<U, T>& Table, const std::string& name)
+		void BuildTable(const std::unordered_map<U, T>& Table, const std::string& name, size_t pdbId)
 		{
 			std::string EndClause;
-			CreateTable<T>(name, EndClause);
-			PopulateTable(Table.begin(), Table.end(), name);
+			CreateTable<T>(name, EndClause, pdbId);
+			PopulateTable(Table.begin(), Table.end(), name, pdbId);
 		}
 
 		void Send()
 		{
-#define BEGIN_STRUCT(type, name, desc,category) BuildTable(Results.type, #name );
+#define BEGIN_STRUCT(type, name, desc,category) BuildTable(Results.type, #name, pdbid );
 
 #include "PDBReflection.inl"
 
@@ -165,9 +168,11 @@ namespace ODBC
 		}
 	};
 
-	void output(SymbolData& Data)
+	void output(const SymbolData& Data, size_t pdbId, const std::vector<std::string>& pdbs)
 	{
-		Output Result(Data);
+		Output Result(Data, pdbId);
+		//TODO: add dumping of pdb list
+		pdbs;
 	}
 	std::string describe()
 	{

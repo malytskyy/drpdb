@@ -50,14 +50,13 @@ namespace DIA2
 	void Document();
 }
 
-std::function<void(SymbolData&)> get_input_engine()
+std::function<void(const std::string& filePath, SymbolData&)> get_input_engine()
 {
-	auto input = getOption("-in");
-	if (input.size())
+	return [](const std::string& filePath, SymbolData& Sym)
 	{
-		return [input](SymbolData& Syms) { DIA2::ReadSymbols(input.data(), Syms); };
-	}
-	return nullptr;
+		Sym.filename = filePath;
+		DIA2::ReadSymbols(filePath.c_str(), Sym);
+	};
 }
 
 std::vector<OutputEngine> gEngines;
@@ -115,13 +114,58 @@ void PrintUsage()
 std::string gErr;
 void set_error(const char* err)
 {
-	gErr += err;
-	gErr += "\r\n";
+	if (!err)
+	{
+		gErr.clear();
+	}
+	else
+	{
+		gErr += err;
+		gErr += "\r\n";
+	}
 }
 bool has_error()
 {
 	return !gErr.empty();
 }
+
+std::vector<std::string> gPdbfiles;
+std::vector<std::string>::iterator begin()
+{
+	auto input = getOption("-in");
+	if (input.size())
+	{
+		std::string dir;
+		auto lastDirSeparatorPos = input.rfind('\\');
+		if (std::string::npos != lastDirSeparatorPos)
+		{
+			dir = input.substr(0, lastDirSeparatorPos);
+		}
+		WIN32_FIND_DATAA fd;
+		HANDLE hFind = ::FindFirstFileA(input.data(), &fd);
+		bool cont = hFind != INVALID_HANDLE_VALUE;
+		while (cont)
+		{
+			if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			{
+				continue;
+			}
+			std::string filePath = !dir.empty() ? dir + '\\' + fd.cFileName: fd.cFileName;
+			std::cout << "Found file: " << filePath << std::endl;
+			gPdbfiles.emplace_back(std::move(filePath));
+
+			cont = (::FindNextFileA(hFind, &fd) != 0);
+		}
+		::FindClose(hFind);
+	}
+	return gPdbfiles.begin();
+}
+
+std::vector<std::string>::iterator end()
+{
+	return gPdbfiles.end();
+}
+
 int main(int argc, char** argv)
 {
 	gArgc = argc;
@@ -150,42 +194,53 @@ int main(int argc, char** argv)
 	}
 
 	init_engines();
-	SymbolData S;
-	std::string searchPath;
 
 #if !defined(_DEBUG)
 	_CrtSetDbgFlag( 0 );
 #endif
 	auto input = get_input_engine();
 	auto output = get_output_engine();
+	size_t pdbId = 0;
+	bool hadErrors = false;
 
-	if (!output)
+	if (input && output)
+	{
+		auto it = begin();
+		const auto itEnd = end();
+		const auto count = std::distance(it, itEnd);
+		for (; it != itEnd; ++it)
+		{
+			set_error(nullptr);
+			SymbolData S;
+			std::cout << "[" << pdbId + 1 << "/" <<  count <<
+				"] Processing " << *it << "..." << std::endl;
+			input(*it, S);
+			std::cout << "Saving results..." << std::endl;
+			try
+			{
+				output->output(S, pdbId++, gPdbfiles);
+			}
+			catch (const char* ex)
+			{
+				set_error(ex);
+			}
+
+			if (!gErr.empty())
+			{
+				std::cerr << gErr;
+				hadErrors = true;
+			}
+		}
+	}
+	else
 	{
 		PrintUsage();
 		return 1;
 	}
-	else
+	if (hadErrors)
 	{
-		if (input)
-		{
-			input(S);
-		}
-
-		std::cout << "Saving results..." << std::endl;
-		try
-		{
-			output->output(S);
-		}
-		catch (const char* ex)
-		{
-			set_error(ex);
-		}
-
-		if (!gErr.empty())
-		{
-			std::cerr << gErr;
-			return 1;
-		}
+		return 1;
 	}
+	return 0;
 }
 

@@ -1,6 +1,7 @@
 #include "drpdb.h"
 #include "SQLSchemaWriter.h"
 #include "stringutils.h"
+#include "CSVWriter.h"
 namespace SQL
 {
 	schema_writer::schema_writer(bool UseBitType_)
@@ -13,14 +14,21 @@ namespace SQL
 	}
 	void schema_writer::column_desc(db_index type, const char* name)
 	{
+		bool AddPdbIdIntoKey = false;
 		if (type == db_index::PRIMARYKEY)
 		{
 			Keys += "PRIMARY ";
+			AddPdbIdIntoKey = true;
 		}
 		if (type != db_index::NOTKEY)
 		{
 			Keys += "KEY (";
 			Keys += name;
+			if (AddPdbIdIntoKey)
+			{
+				Keys += ", ";
+				Keys += CSV::details::pdbColumn();
+			}
 			Keys += "),";
 		}
 		Result += " ";
@@ -92,5 +100,29 @@ namespace SQL
 			column_comment(V.desc, Result);
 		}
 
+	}
+	void schema_writer::operator<<(const PdbIdTable& )
+	{
+		Keys += " PRIMARY ";
+		Keys += "KEY (";
+		Keys += CSV::details::pdbColumn();
+		Keys += ")";
+
+		Result += " ";
+		Result += CSV::details::pdbColumn();
+		Result += " INT UNSIGNED NOT NULL";
+		Result += " COMMENT 'id of the PDB', ";
+
+		Result += CSV::details::pdbNameColumn();
+		Result += " VARCHAR(2047) NOT NULL";
+		Result += " COMMENT 'path to PDB', ";
+
+		if (UseBitType)
+		{
+			LoadClause += CSV::details::pdbColumn();
+			LoadClause += ", ";
+			LoadClause += CSV::details::pdbNameColumn();
+			LoadClause += " ";
+		}
 	}
 }

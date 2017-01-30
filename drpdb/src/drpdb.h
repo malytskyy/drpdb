@@ -884,6 +884,7 @@ struct SymbolData
 	std::vector<Sym::VTablePtr> VTablePtr;
 	std::vector<Sym::VTableShape> VTableShape;
 	std::vector<Sym::Friend> Friend;
+	std::string filename;
 
 	template<class ELEMENT>
 	struct emplace_helper
@@ -932,10 +933,15 @@ struct SymbolData
 	}
 };
 
+struct PdbIdTable
+{
+	std::string PdbFile;
+};
+
 struct OutputEngine
 {
 	std::string name;
-	void(*output)(SymbolData&);
+	void(*output)(const SymbolData&, size_t pdbId, const std::vector<std::string>& pdbs);
 	std::string(*describe)();
 };
 
