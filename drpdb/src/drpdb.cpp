@@ -10,11 +10,14 @@ static const char** gArgv;
 
 std::string getOption(const char* name)
 {
+	auto len = (int)(strlen(name));
 	for (int i = 0; i < gArgc; ++i)
 	{
 		if (auto found = strchr(gArgv[i], '='))
 		{
-			if (strncmp(gArgv[i], name, found - gArgv[i]) == 0)
+			if (found &&
+				(int)(found - gArgv[i]) == len &&
+				strncmp(gArgv[i], name, found - gArgv[i]) == 0)
 			{
 				if (*found + 1 == '\"')
 				{
